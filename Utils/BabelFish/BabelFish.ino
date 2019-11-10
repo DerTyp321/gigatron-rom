@@ -27,7 +27,7 @@
 // 3. Forward text from USB to Gigatron as keystrokes
 //    For example to get a long BASIC program loaded into BASIC
 // 4. Controlling the Gigatron over USB from a PC/laptop
-// 5. Passing through of game controller signals (XXX currently broken)
+// 5. Passing through of game controller signals
 // 6. Receive data from Gigatron and store it in the EEPROM area
 //
 // Select one of the supported platforms in the Tools->Board menu.
@@ -79,6 +79,9 @@
 
  // Link to PC/laptop
  #define hasSerial 1
+
+ // SD Card
+ #define sdChipSelectPin -1
 #endif
 
 /*----------------------------------------------------------------------+
@@ -117,6 +120,9 @@
 
  // Link to PC/laptop
  #define hasSerial 1
+
+ // SD Card
+ #define sdChipSelectPin -1
 #endif
 
 /*----------------------------------------------------------------------+
@@ -168,6 +174,9 @@
 
  // Link to PC/laptop
  #define hasSerial 1
+ 
+ // SD Card
+ #define sdChipSelectPin -1
 #endif
 
 /*----------------------------------------------------------------------+
@@ -210,6 +219,46 @@
 
  // Link to PC/laptop
  #define hasSerial 0
+ 
+ // SD Card
+ #define sdChipSelectPin -1
+#endif
+
+/*----------------------------------------------------------------------+
+ |      Pro Micro config                                              |
+ +----------------------------------------------------------------------*/
+
+// Arduino    AVR    Gigatron Schematic Controller PCB              Gigatron
+// Pro Micro  Name   OUT bit            CD4021     74HC595 (U39)    DB9 (J4)
+// ---------- ------ -------- --------- ---------- ---------------- --------
+// Pin 13     PORTB5 None     SER_DATA  11 SER INP 14 SER           2
+// Pin 12     PORTB4 7 vSync  SER_LATCH  0 PAR/SER None             3
+// Pin 11     PORTB3 6 hSync  SER_PULSE 10 CLOCK   11 SRCLK 12 RCLK 4
+
+#if defined(ARDUINO_AVR_PROMICRO)
+ #define platform "ArduinoProMicro"
+ #define maxStorage 28672 // TODO: find out exact value
+
+ // Pins for Gigatron (must be on PORTB)
+ #define gigatronDataPin  8
+ #define gigatronLatchPin 9
+ #define gigatronPulsePin 10
+ #define gigatronPinToBitMask digitalPinToBitMask
+
+ // Pins for Controller
+ #define gameControllerDataPin 5
+ #define gameControllerLatchPin 6
+ #define gameControllerPulsePin 7
+
+ // Pins for PS/2 keyboard
+ #define keyboardClockPin 3 // Pin 2 or 3 for IRQ
+ #define keyboardDataPin  4 // Any available free pin
+
+ // Link to PC/laptop
+ #define hasSerial 1
+
+ // SD Card
+ #define sdChipSelectPin -1
 #endif
 
 /*----------------------------------------------------------------------+
@@ -234,7 +283,7 @@ const byte bricks_gt1[]    PROGMEM = {
   #include "bricks.h"
 };
 const byte lines_gt1[]     PROGMEM = {
-  #include "lines.h"
+  #include "Lines.h"
 };
 const byte life3_gt1[]     PROGMEM = {
   #include "life3.h"
@@ -326,6 +375,20 @@ static word EEPROM_length;
 #define arrayLen(a) ((int) (sizeof(a) / sizeof((a)[0])))
 extern const byte nrKeymaps; // From in PS2.ino
 
+
+// Current location for Gt1 transfer from internal storage
+byte *gt1ProgmemLoc;
+
+#if sdChipSelectPin >= 0
+  // SD card libraries
+  #include <SPI.h>
+  #include <SD.h>
+
+  // Current file to be transfered from SD card
+  File *transferFileSD;
+#endif
+
+
 /*
  *  Setup runs once when the Arduino wakes up
  */
@@ -339,12 +402,24 @@ void setup()
   PORTB |= gigatronDataBit; // Send 1 when idle
   DDRB = gigatronDataBit;
 
+  // Set pin modes for game controller passthrough
+  #if gameControllerDataPin >= 0
+    pinMode(gameControllerDataPin, INPUT);
+    pinMode(gameControllerLatchPin, OUTPUT);
+    pinMode(gameControllerPulsePin, OUTPUT);
+  #endif
+
   // Open upstream communication
   #if hasSerial
     Serial.begin(115200);
     doVersion();
   #endif
 
+  // Initialize sd card
+  #if sdChipSelectPin >= 0
+    SD.begin(sdChipSelectPin);
+  #endif
+  
   // Cache for speed
   EEPROM_length = EEPROM.length();
 
@@ -413,14 +488,37 @@ void loop()
       inLen = 0;
       break;
   }
-
-  // Game controller pass through (XXX currently broken)
+  
+  // Game controller pass through
   #if gameControllerDataPin >= 0
-    digitalWrite(gigatronDataPin, digitalRead(gameControllerDataPin));
+    for(;;)
+    {
+      byte gameControllerData = 0;
+      digitalWrite(gameControllerLatchPin, HIGH);
+      delayMicroseconds(50);
+      digitalWrite(gameControllerLatchPin, LOW);
+      delayMicroseconds(50);
+      
+      for(byte i = 0; i < 8; i++) {
+        gameControllerData <<= 1;
+        gameControllerData |= digitalRead(gameControllerDataPin);
+  
+        digitalWrite(gameControllerPulsePin, HIGH);
+        delayMicroseconds(50);
+        digitalWrite(gameControllerPulsePin, LOW);
+        delayMicroseconds(50);
+      }
+      if(gameControllerData == 0xFF) break;
+      else {
+        critical();
+        sendFirstByte(gameControllerData);
+        nonCritical();
+      }   
+    }
   #endif
 
   // PS/2 keyboard events
-  delay(15);                           // Allow PS/2 interrupts for a reasonable window
+  delay(10);                           // Allow PS/2 interrupts for a reasonable window
   byte key = keyboard_getState();
   if (key != 255) {
     byte f = fnKey(key ^ 64);          // Ctrl+Fn key?
@@ -428,9 +526,10 @@ void loop()
       if (f == 1)
         doMapping();                   // Ctrl-F1 is help
       else if (f-2 < arrayLen(gt1Files)) {
-        if (gt1Files[f-2].gt1)
-          doTransfer(gt1Files[f-2].gt1); // Send built-in GT1 file to Gigatron
-        else
+        if (gt1Files[f-2].gt1) {
+          gt1ProgmemLoc = gt1Files[f-2].gt1; // Set Location of built-in GT1 file
+          doTransfer(readNextProgmem, NULL); // Send GT1 file to Gigatron
+        } else
           sendSavedFile();
       }
     }
@@ -509,27 +608,29 @@ void sendEcho(char next, char last)
 void doCommand(char line[])
 {
   int arg = line[0] ? atoi(&line[1]) : 0;
+  Serial.println(line);
   switch (toupper(line[0])) {
-  case 'V': doVersion();                      break;
-  case 'H': doHelp();                         break;
-  case 'R': doReset(arg);                     break;
-  case 'L': doLoader();                       break;
-  case 'M': doMapping();                      break;
-  case 'P': if (0 <= arg && arg < arrayLen(gt1Files))
-              doTransfer(gt1Files[arg].gt1);  break;
-  case 'U': doTransfer(NULL);                 break;
-  case '.': doLine(&line[1]);                 break;
-  case 'C': doEcho(!echo);                    break;
-  case 'T': doTerminal();                     break;
-  case 'W': sendController(~buttonUp,     2); break;
-  case 'A': sendController(~buttonLeft,   2); break;
-  case 'S': sendController(~buttonDown,   2); break;
-  case 'D': sendController(~buttonRight,  2); break;
-  case 'Z': sendController(~buttonA & 255,2); break;
-  case 'X': sendController(~buttonB,      2); break;
-  case 'Q': sendController(~buttonSelect, 2); break;
-  case 'E': sendController(~buttonStart,  2); break;
-  case 0: /* Empty line */                    break;
+  case 'V': doVersion();                          break;
+  case 'H': doHelp();                             break;
+  case 'R': doReset(arg);                         break;
+  case 'L': doLoader();                           break;
+  case 'M': doMapping();                          break;
+  case 'P': doProgmemFileTransfer(arg);           break;
+  case 'U': doTransfer(readNextSerial, askSerial);break;
+  case 'K': doSDFileTransfer(&line[1]);           break;
+  case 'J': doPrintSDFiles();                     break;
+  case '.': doLine(&line[1]);                     break;
+  case 'C': doEcho(!echo);                        break;
+  case 'T': doTerminal();                         break;
+  case 'W': sendController(~buttonUp,     2);     break;
+  case 'A': sendController(~buttonLeft,   2);     break;
+  case 'S': sendController(~buttonDown,   2);     break;
+  case 'D': sendController(~buttonRight,  2);     break;
+  case 'Z': sendController(~buttonA & 255,2);     break;
+  case 'X': sendController(~buttonB,      2);     break;
+  case 'Q': sendController(~buttonSelect, 2);     break;
+  case 'E': sendController(~buttonStart,  2);     break;
+  case 0: /* Empty line */                        break;
   default:
     #if hasSerial
       Serial.println("!Unknown command (type 'H' for help)");
@@ -613,6 +714,8 @@ void doHelp()
     Serial.println(": M        Show key mapping or menu in Loader screen");
     Serial.println(": P[<n>]   Transfer object file from PROGMEM slot <n> [1..12]");
     Serial.println(": U        Transfer object file from USB");
+    Serial.println(": K<name>  Transfer object file <name> from SD Card");
+    Serial.println(": J        List Files on SD Card");
     Serial.println(": .<text>  Send text line as ASCII key strokes");
     Serial.println(": C        Toggle echo mode (default off)");
     Serial.println(": T        Enter terminal mode");
@@ -711,6 +814,45 @@ void doTerminal()
   #endif
 }
 
+void doProgmemFileTransfer(int arg)
+{
+  if (0 <= arg && arg < arrayLen(gt1Files)) {
+    gt1ProgmemLoc = gt1Files[arg].gt1; // Set Location of built-in GT1 file
+    doTransfer(readNextProgmem, NULL); // Send GT1 file to Gigatron
+  }
+}
+
+void doSDFileTransfer(char *filename)
+{
+  #if sdChipSelectPin >= 0
+    File dataFile = SD.open(filename);
+    if(!dataFile) {
+      #if hasSerial
+        Serial.println("!File not found on SD card");
+      #endif
+      return;
+    }
+    transferFileSD = &dataFile;
+    doTransfer(readNextSD, NULL);
+    dataFile.close();
+  #endif
+}
+
+void doPrintSDFiles()
+{
+  #if hasSerial and sdChipSelectPin >= 0
+    Serial.println(": Listing files...");
+    File root = SD.open("/");
+    File current;
+    while(current = root.openNextFile()) {
+      if(!current.isDirectory()) {
+        Serial.print(": File: ");
+        Serial.println(current.name());
+      }
+    }
+  #endif
+}
+
 // Render line in Loader screen
 word renderLine(word pos, const char *text)
 {
@@ -769,58 +911,78 @@ word renderString(word pos, const char text[])
   return pos + x;
 }
 
+
+// read next GT1 byte from USB
+int readNextSerial()
+{
+  #if hasSerial
+    return nextSerial();
+  #else
+    return -1;
+  #endif
+}
+
+// read next GT1 byte from internal memory
+int readNextProgmem()
+{
+  return pgm_read_byte(gt1ProgmemLoc++);
+}
+
+// read next GT1 byte from SD card
+int readNextSD() {
+  #if sdChipSelectPin >= 0
+    if(transferFileSD->available()) return transferFileSD->read();
+    else return -1;
+  #else
+    return -1;
+  #endif
+}
+
+// ask for n bytes via serial
+void askSerial(int n)
+{
+  #if hasSerial
+  Serial.print(n);
+  Serial.println("?");
+  #endif
+}
+
+
 // Because the Arduino doesn't have enough RAM to buffer
 // a complete GT1 file, it processes these files segment
 // by segment. Each segment is transmitted downstream in
 // concatenated frames to the Gigatron. Between segments
 // it is communicating upstream with the serial port.
 
-void doTransfer(const byte *gt1)
+void doTransfer(int (*readNext)(), void (*ask)(int))
 {
   int nextByte;
 
   #if hasSerial
-    if (!waitVSync()) {
+    if (!waitVSync()){
       Serial.print("!Failed");
       return;
     }
   #endif
-
-  #if hasSerial
-    #define readNext()\
-      if (gt1)\
-        nextByte = pgm_read_byte(gt1++);\
-      else {\
-        nextByte = nextSerial();\
-        if (nextByte < 0) return;\
-      }
-    #define ask(n)\
-      if (!gt1) {\
-        Serial.print(n);\
-        Serial.println("?");\
-      }
-  #else
-    #define readNext() (nextByte = pgm_read_byte(gt1++))
-    #define ask(n)
-  #endif
-
-  ask(3);
-  readNext();
+  
+  if(ask)ask(3);
+  
+  nextByte = readNext();
   word address = nextByte;
 
   // Any number n of segments (n>0)
   do {
     // Segment start and length
-    readNext();
+    nextByte = readNext();
     address = (address << 8) + nextByte;
-    readNext();
+    nextByte = readNext();
     int len = nextByte ? nextByte : 256;
 
-    ask(len);
+    if(ask)ask(len);
 
     // Copy data into send buffer
     for (int i=0; i<len; i++) {
-      readNext();
+      nextByte = readNext();
       outBuffer[i] = nextByte;
     }
 
@@ -843,17 +1005,17 @@ void doTransfer(const byte *gt1)
     sendGt1Segment(address, len);
 
     // Signal that we're ready to receive more
-    ask(3);
-    readNext();
+    if(ask)ask(3);
+    nextByte = readNext();
     address = nextByte;
 
   } while (address != 0);
 
   // Two bytes for start address
-  readNext();
+  nextByte = readNext();
 
   address = nextByte;
-  readNext();
+  nextByte = readNext();
   address = (address << 8) + nextByte;
   if (address != 0) {
     #if hasSerial
@@ -1103,4 +1265,3 @@ void sendSavedFile()
       delay(nextByte == 10 ? 70 : 20);  // Allow Gigatron software to process byte
     } while (++i < EEPROM.length());
 }
-
