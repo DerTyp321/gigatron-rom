@@ -27,14 +27,17 @@
 // 3. Forward text from USB to Gigatron as keystrokes
 //    For example to get a long BASIC program loaded into BASIC
 // 4. Controlling the Gigatron over USB from a PC/laptop
-// 5. Passing through of game controller signals
-// 6. Receive data from Gigatron and store it in the EEPROM area
+// 5. Passing through of game controller signals (XXX currently broken)
+// 6. Receive data from Gigatron and store it in the EEPROM area.
+//    If USB is connected, it also gets forwarded to the PC/laptop.
+// 7. Sending the EEPROM data back into the Gigatron as a series
+//    of keystrokes.
 //
 // Select one of the supported platforms in the Tools->Board menu.
 //
 // Supported:
 //      - Arduino/Genuino Uno
-//      - Arduino Nano
+//      - Arduino Nano XXX <-- This one has issues with ROMv4 (#122)
 //      - Arduino/Genuino Micro
 //      - ATtiny85 (8 MHz)
 //
@@ -90,11 +93,29 @@
 
 // Arduino   AVR    Gigatron Schematic Controller PCB              Gigatron Controller
 // Nano      Name   OUT bit            CD4021     74HC595 (U39)    DB9 (J4) DB9
-// -------   ------ -------- --------- ---------- ---------------- -------- -------
+// --------- ------ -------- --------- ---------- ---------------- -------- -------
 // Pin J2-15 PORTB5 None     SER_DATA  11 SER INP 14 SER           2        None
 // Pin J1-15 PORTB4 7 vSync  SER_LATCH  0 PAR/SER None             3        3
 // Pin J1-14 PORTB3 6 hSync  SER_PULSE 10 CLOCK   11 SRCLK 12 RCLK 4        4
 // Pin J1-13 PORTB2 None     None      None       None             None     2
+
+//                   SER_DATA
+//                   |
+//    O  O  O  O  O  O
+// --------------------+
+//                  D13|
+//  Arduino      +-------+
+//   Nano        |       |
+//    / \        |       |
+//   /   \       |  USB  |
+//   \   /       |       |
+//    \ /        |       |
+//               +-------+
+//              D11 D12|
+// --------------------+
+//    O  O  O  O  O  O
+//                |  |
+//        SER_PULSE  SER_LATCH
 
 #if defined(ARDUINO_AVR_NANO)
  // at67's setup
@@ -112,7 +133,7 @@
  #define gigatronPinToBitMask digitalPinToBitMask // Regular Arduino pin numbers
 
  // Pins for Controller
- #define gameControllerDataPin 10 // PB2
+ #define gameControllerDataPin 10 // PB2 (XXX currently broken)
 
  // Pins for PS/2 keyboard
  #define keyboardClockPin 3 // Pin 2 or 3 for IRQ
@@ -138,6 +159,9 @@
 // MISO    PORTB3 7 vSync  SER_LATCH  0 PAR/SER None             3
 // MOSI    PORTB2 6 hSync  SER_PULSE 10 CLOCK   11 SRCLK 12 RCLK 4
 
+//        SER_LATCH  SER_DATA
+//                |  |
+//    O  O  O  O  O  O
 // --------------------+
 //               Reset |
 // Arduino       +---+ |
@@ -149,6 +173,9 @@
 //        Port  .o o o |
 //               1 3 5 |
 // --------------------+
+//    O  O  O  O  O  O
+//                   |
+//                   SER_PULSE
 
 #if defined(ARDUINO_AVR_MICRO)
  // WattSekunde's setup
@@ -211,7 +238,7 @@
  #define gigatronPinToBitMask(pin) (1 << (pin))
 
  // Pins for Controller
- #define gameControllerDataPin -1 // XXX Maybe use ~RESET for this some day
+ #define gameControllerDataPin -1
 
  // Pins for PS/2 keyboard
  #define keyboardClockPin PB4
@@ -237,7 +264,7 @@
 
 #if defined(ARDUINO_AVR_PROMICRO)
  #define platform "ArduinoProMicro"
- #define maxStorage 28672 // TODO: find out exact value
+ #define maxStorage 9999
 
  // Pins for Gigatron (must be on PORTB)
  #define gigatronDataPin  8
@@ -258,7 +285,7 @@
  #define hasSerial 1
 
  // SD Card
- #define sdChipSelectPin -1
+ #define sdChipSelectPin 2
 #endif
 
 /*----------------------------------------------------------------------+
@@ -291,25 +318,26 @@ const byte life3_gt1[]     PROGMEM = {
 const byte starfield_gt1[] PROGMEM = {
   #include "starfield.h"
 };
-const byte tetris_gt1[]    PROGMEM = {
-  #include "tetris.h"
+const byte tetronis_gt1[]  PROGMEM = {
+  #include "tetronis.h"
 };
 
 const struct { const byte *gt1; const char *name; } gt1Files[] = {
+  // BASIC image in slot 0 for sendFile.py with .GTB files
   { TinyBASIC_gt1, "BASIC"                    }, // 3073 bytes
 #if maxStorage >= 10000
   { WozMon_gt1,    "WozMon"                   }, // 595 bytes
   { Terminal_gt1,  "Terminal"                 }, // 256 bytes
   { Blinky_gt1,    "Blinky"                   }, // 17 bytes
-  { lines_gt1,     "Lines demo [at67]"        }, // 304 bytes
-  { life3_gt1,     "Game of Life demo [at67]" }, // 441 bytes
-  { starfield_gt1, "Starfield demo [at67]"    }, // 817 bytes
+  { lines_gt1,     "Lines [at67]"        }, // 304 bytes
+  { life3_gt1,     "Game of Life [at67]" }, // 441 bytes
+  { starfield_gt1, "Starfield [at67]"    }, // 817 bytes
 #endif
 #if maxStorage >= 30000
-  { bricks_gt1,    "Bricks game [xbx]"        }, // 1607 bytes
-  { tetris_gt1,    "Tetris game [at67]"       }, // 9868 bytes
+  { bricks_gt1,    "Bricks [xbx]"        }, // 1607 bytes
+  { tetronis_gt1,  "Tetronis [at67]"     }, // 9840 bytes
 #endif
-  { NULL,          "-SAVED-"                  },
+  { NULL,          "-SAVED-"                  }, // From EEPROM, not PROGMEM
 };
 
 /*----------------------------------------------------------------------+
@@ -385,7 +413,7 @@ byte *gt1ProgmemLoc;
   #include <SD.h>
 
   // Current file to be transfered from SD card
-  File *transferFileSD;
+  File transferFileSD;
 #endif
 
 
@@ -439,26 +467,24 @@ void setup()
 void loop()
 {
   // Check Gigatron's vPulse for incoming data
-  static byte inByte, inBit, inLen;
+  static byte inByte, inBit, hasChars;
 
   critical();
   byte newValue = waitVSync();
   nonCritical();
 
   switch (newValue) {
-
     case 9:                            // Received one bit
       inByte |= inBit;
       // !!! FALL THROUGH !!!
-
     case 7:                            // Received zero bit
       inBit <<= 1;
 
       if (saveIndex >= EEPROM_length)  // EEPROM overflow
-        if (inLen > 0)                 // Only break if this can't be a new program
-          sendController(3, 10);       // Send long Ctrl-C back
+        if (hasChars)                  // Only break if this isn't an empty line
+          sendController(3, 10);       // Send long Ctrl-C back to stop LIST
 
-      if (inBit != 0)
+      if (inBit != 0)                  // Still a partial byte
         break;
 
       EEPROM.write(saveIndex++, inByte);// Store every full byte
@@ -471,12 +497,12 @@ void loop()
       #endif
 
       if (inByte == 10) {              // End of line?
-        EEPROM.write(saveIndex, 255);  // Terminate, in case this was the last line
-        if (inLen == 0)                // An empty line clears the old program
+        EEPROM.write(saveIndex, 255);  // EOF terminator, in case this becomes the last line
+        if (!hasChars)                 // An empty line clears the old program
           saveIndex = fileStart;
-        inLen = 0;
-      } else
-        inLen++;
+        hasChars = false;
+      } else if (inByte != 13)         // Don't count CR towards line length
+        hasChars = true;
 
       inByte = 0;                      // Prepare for next byte
       inBit = 1;
@@ -485,7 +511,7 @@ void loop()
     default:
       inByte = 0;                      // Reset incoming data state
       inBit = 1;
-      inLen = 0;
+      hasChars = false;
       break;
   }
   
@@ -548,17 +574,17 @@ void loop()
 
   // Commands from upstream USB (PC/laptop)
   #if hasSerial
-    static char line[32], next = 0, last;
+    #define lineBuffer outBuffer
+    static char next = 0, last;
     static byte lineIndex = 0;
-    if (Serial.available()) {
+    while (Serial.available()) {
       last = next;
-      char next = Serial.read();
+      char next = nextSerial();
       sendEcho(next, last);
-      if (lineIndex < sizeof line)
-        line[lineIndex++] = next;
+      lineBuffer[lineIndex++] = next;
       if (next == '\r' || next == '\n') {
-        line[lineIndex-1] = '\0';
-        doCommand(line);
+        lineBuffer[lineIndex-1] = '\0';
+        doCommand(lineBuffer);
         lineIndex = 0;
       }
     }
@@ -568,7 +594,7 @@ void loop()
 void prompt()
 {
   #if hasSerial
-    Serial.println(detectGigatron() ? ":Gigatron OK" : "!Gigatron offline");
+    Serial.println(detectGigatron() ? ":OK" : "!offline");
     Serial.println("Cmd?");
   #endif
 }
@@ -589,7 +615,7 @@ bool detectGigatron()
   float hSync = (T[0] + T[2]) / (96 * S / 800); // Standard hSync signal
 
   // Check that vSync and hSync characteristics look normal
-  return 0.95 <= vSync && vSync <= 1.20 && 0.90 <= hSync && hSync <= 1.10;
+  return 0.95 <= vSync && vSync <= 1.25 && 0.90 <= hSync && hSync <= 1.10;
 }
 
 void sendEcho(char next, char last)
@@ -598,7 +624,8 @@ void sendEcho(char next, char last)
     if (echo)
       switch (next) {
         case 127:  Serial.print("\b \b"); break;
-        case '\n': if (last == '\r')      break; // else FALL THROUGH
+        case '\n': if (last == '\r')      break;
+        // !!! FALL THROUGH !!!
         case '\r': Serial.println();      break;
         default: Serial.print(next);
       }
@@ -608,7 +635,6 @@ void sendEcho(char next, char last)
 void doCommand(char line[])
 {
   int arg = line[0] ? atoi(&line[1]) : 0;
-  Serial.println(line);
   switch (toupper(line[0])) {
   case 'V': doVersion();                          break;
   case 'H': doHelp();                             break;
@@ -633,7 +659,7 @@ void doCommand(char line[])
   case 0: /* Empty line */                        break;
   default:
     #if hasSerial
-      Serial.println("!Unknown command (type 'H' for help)");
+      Serial.println("!Unknown command");
     #endif
     ;
   }
@@ -643,7 +669,7 @@ void doCommand(char line[])
 void doVersion()
 {
   #if hasSerial
-    Serial.println(":BabelFish platform=" platform);
+    Serial.println(":Platform=" platform);
     Serial.println(":Pins:");
     #define V(s) #s
     #define Q(s) V(s)
@@ -663,7 +689,7 @@ void doVersion()
       Serial.println(gt1Files[i].name);
     }
     doEcho(echo);
-    Serial.println(":Type 'H' for help");
+    Serial.println(":'H' for help");
   #endif
 }
 
@@ -706,22 +732,22 @@ void doEcho(byte value)
 void doHelp()
 {
   #if hasSerial
-    Serial.println(":Commands are");
-    Serial.println(": V        Show configuration");
-    Serial.println(": H        Show this help");
-    Serial.println(": R        Reset Gigatron");
-    Serial.println(": L        Start Loader");
-    Serial.println(": M        Show key mapping or menu in Loader screen");
-    Serial.println(": P[<n>]   Transfer object file from PROGMEM slot <n> [1..12]");
-    Serial.println(": U        Transfer object file from USB");
-    Serial.println(": K<name>  Transfer object file <name> from SD Card");
-    Serial.println(": J        List Files on SD Card");
-    Serial.println(": .<text>  Send text line as ASCII key strokes");
-    Serial.println(": C        Toggle echo mode (default off)");
-    Serial.println(": T        Enter terminal mode");
-    Serial.println(": W/A/S/D  Up/left/down/right arrow");
-    Serial.println(": Z/X      A/B button");
-    Serial.println(": Q/E      Select/start button");
+    Serial.println(":Commands");
+    Serial.println(": V        Config");
+    Serial.println(": H        Help");
+    Serial.println(": R        Reset");
+    Serial.println(": L        Loader");
+    Serial.println(": M        Key Mapping");
+    Serial.println(": P[<n>]   From PROGMEM slot <n>");
+    Serial.println(": U        From USB");
+    Serial.println(": K<name>  Transfer from SD");
+    Serial.println(": J        List SD");
+    Serial.println(": .<text>  Send Keys");
+    Serial.println(": C        Echo toggle");
+    Serial.println(": T        Terminal mode");
+    Serial.println(": W/A/S/D  Arrows");
+    Serial.println(": Z/X      A/B");
+    Serial.println(": Q/E      Select/Start");
   #endif
 }
 
@@ -729,10 +755,10 @@ void doReset(int n)
 {
   // Soft reset: hold start for >128 frames (>2.1 seconds)
   #if hasSerial
-    Serial.println(":Resetting Gigatron");
+    Serial.println(":Resetting");
     Serial.flush();
   #endif
-  sendController(~buttonStart, n ? n : 128+32);
+  sendController(~buttonStart, n ? n : 150);
 
   // Wait for main menu to be ready
   delay(1500);
@@ -742,7 +768,7 @@ void doLoader()
 {
   // Navigate menu. 'Loader' is at the bottom
   #if hasSerial
-    Serial.println(":Starting Loader from menu");
+    Serial.println(":Start Loader");
     Serial.flush();
   #endif
 
@@ -762,11 +788,11 @@ void doLine(char *line)
 {
   // Pass through the line of text
   for (byte i=0; line[i]; i++) {
-    sendController(line[i], 1);
+    sendController(line[i], 2);
     delay(20); // Allow Gigatron software to process key code
   }
   // And terminal with a CR
-  sendController('\n', 1);
+  sendController('\n', 2);
   delay(50); // Allow Gigatron software to process line
 }
 
@@ -781,7 +807,7 @@ void doLine(char *line)
 void doTerminal()
 {
   #if hasSerial
-    Serial.println(":Entering terminal mode");
+    Serial.println(":Terminal mode");
     Serial.println(":Exit with Ctrl-D");
     char next = 0, last;
     byte out;
@@ -789,7 +815,7 @@ void doTerminal()
     for (;;) {
       if (Serial.available()) {
         last = next;
-        next = Serial.read();
+        next = nextSerial();
         sendEcho(next, last);
 
         // Mappings for newline and arrow sequences
@@ -797,8 +823,8 @@ void doTerminal()
         switch (next) {
           case 4:                                  return;   // Ctrl-D (EOT)
           case 9: out = ~buttonB;                  break;    // Same as PS/2 above
-          case '\r': out = '\n';                   break;
-          case '\n': if (last == '\r')             continue; // Swallow
+          case '\r': out = '\n';                   break;    // Treat as \n
+          case '\n': if (last == '\r') continue;   break;    // Swallow if after \r
           case '\e':                               continue; // ANSI escape sequence
           case '[': if (last == '\e') ansi = true; continue;
           case 'A': if (ansi) out = ~buttonUp;     break;    // Map cursor keys to buttons
@@ -828,11 +854,11 @@ void doSDFileTransfer(char *filename)
     File dataFile = SD.open(filename);
     if(!dataFile) {
       #if hasSerial
-        Serial.println("!File not found on SD card");
+        Serial.println("!Not on SD");
       #endif
       return;
     }
-    transferFileSD = &dataFile;
+    transferFileSD = dataFile;
     doTransfer(readNextSD, NULL);
     dataFile.close();
   #endif
@@ -841,7 +867,7 @@ void doSDFileTransfer(char *filename)
 void doPrintSDFiles()
 {
   #if hasSerial and sdChipSelectPin >= 0
-    Serial.println(": Listing files...");
+    Serial.println(": Files");
     File root = SD.open("/");
     File current;
     while(current = root.openNextFile()) {
@@ -849,7 +875,9 @@ void doPrintSDFiles()
         Serial.print(": File: ");
         Serial.println(current.name());
       }
+      current.close();
     }
+    root.close();
   #endif
 }
 
@@ -929,9 +957,10 @@ int readNextProgmem()
 }
 
 // read next GT1 byte from SD card
-int readNextSD() {
+int readNextSD()
+{
   #if sdChipSelectPin >= 0
-    if(transferFileSD->available()) return transferFileSD->read();
+    if(transferFileSD.available()) return transferFileSD.read();
     else return -1;
   #else
     return -1;
@@ -963,6 +992,7 @@ void doTransfer(int (*readNext)(), void (*ask)(int))
       Serial.print("!Failed");
       return;
     }
+    Serial.println(":From PROGMEM");
   #endif
   
   if(ask)ask(3);
@@ -989,7 +1019,7 @@ void doTransfer(int (*readNext)(), void (*ask)(int))
     // Check that segment doesn't cross the page boundary
     if ((address & 255) + len > 256) {
       #if hasSerial
-        Serial.println("!Data error (page overflow)");
+        Serial.println("!Page overflow");
       #endif
       return;
     }
@@ -1256,12 +1286,23 @@ byte waitVSync()
 // Send a saved file as keystrokes to the Gigatron
 void sendSavedFile()
 {
-    word i = fileStart;
-    do {
-      byte nextByte = EEPROM.read(i);
-      if (nextByte == 255)
-        break;
-      sendController(nextByte, 1);
-      delay(nextByte == 10 ? 70 : 20);  // Allow Gigatron software to process byte
-    } while (++i < EEPROM.length());
+  #if hasSerial
+    Serial.println(":From EEPROM");
+  #endif
+  word i = fileStart, j = 0;            // i is the file index. j is the line index
+  int lineDelay = 50;                   // Default extra delay time for "line feed"
+  do {
+    byte nextByte = EEPROM.read(i++);   // Fetch next byte from saved program
+    if (j++ == 0 && nextByte == 255)    // EOF. Note that in MSBASIC, 255 means Pi.
+      break;                            // So we only check this after a newline.
+    sendController(nextByte, 2);        // A single frame is sometimes too fast
+    if (nextByte == 13)                 // "A carriage return takes more time"
+      lineDelay = 300 + j * 50;         // Reality: Micro-Soft BASIC is s-l-o-w
+    delay((j % 26) ? 20                 // Allow Gigatron software to draw the char
+                   : 300);              // And give more time at line wrap
+    if (nextByte == 10) {               // End of line
+      delay(lineDelay);                 // Allow some extra time for line processing
+      j = 0;                            // Start of new line
+    }
+  } while (i < EEPROM.length());        // There may be no space for an EOF symbol
 }
