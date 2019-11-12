@@ -330,13 +330,13 @@ const struct { const byte *gt1; const char *name; } gt1Files[] = {
   { WozMon_gt1,    "WozMon"                   }, // 595 bytes
   { Terminal_gt1,  "Terminal"                 }, // 256 bytes
   { Blinky_gt1,    "Blinky"                   }, // 17 bytes
-  { lines_gt1,     "Lines [at67]"        }, // 304 bytes
-  { life3_gt1,     "Game of Life [at67]" }, // 441 bytes
-  { starfield_gt1, "Starfield [at67]"    }, // 817 bytes
+  { lines_gt1,     "Lines demo [at67]"        }, // 304 bytes
+  { life3_gt1,     "Game of Life demo [at67]" }, // 441 bytes
+  { starfield_gt1, "Starfield demo [at67]"    }, // 817 bytes
 #endif
 #if maxStorage >= 30000
-  { bricks_gt1,    "Bricks [xbx]"        }, // 1607 bytes
-  { tetronis_gt1,  "Tetronis [at67]"     }, // 9840 bytes
+  { bricks_gt1,    "Bricks game [xbx]"        }, // 1607 bytes
+  { tetronis_gt1,  "Tetronis game [at67]"     }, // 9840 bytes
 #endif
   { NULL,          "-SAVED-"                  }, // From EEPROM, not PROGMEM
 };
@@ -587,7 +587,7 @@ void loop()
 void prompt()
 {
   #if hasSerial
-    Serial.println(detectGigatron() ? ":OK" : "!offline");
+    Serial.println(detectGigatron() ? ":Gigatron OK" : "!Gigatron offline");
     Serial.println("Cmd?");
   #endif
 }
@@ -652,7 +652,7 @@ void doCommand(char line[])
   case 0: /* Empty line */                        break;
   default:
     #if hasSerial
-      Serial.println("!Unknown command");
+      Serial.println("!Unknown command (type 'H' for help)");
     #endif
     ;
   }
@@ -662,7 +662,7 @@ void doCommand(char line[])
 void doVersion()
 {
   #if hasSerial
-    Serial.println(":Platform=" platform);
+    Serial.println(":BabelFish platform=" platform);
     Serial.println(":Pins:");
     #define V(s) #s
     #define Q(s) V(s)
@@ -682,7 +682,7 @@ void doVersion()
       Serial.println(gt1Files[i].name);
     }
     doEcho(echo);
-    Serial.println(":'H' for help");
+    Serial.println(":Type 'H' for help");
   #endif
 }
 
@@ -725,22 +725,25 @@ void doEcho(byte value)
 void doHelp()
 {
   #if hasSerial
-    Serial.println(":Commands");
-    Serial.println(": V        Config");
-    Serial.println(": H        Help");
-    Serial.println(": R        Reset");
-    Serial.println(": L        Loader");
-    Serial.println(": M        Key Mapping");
-    Serial.println(": P[<n>]   From PROGMEM slot <n>");
-    Serial.println(": U        From USB");
+    Serial.println(":Commands are");
+    Serial.println(": V        Show configuration");
+    Serial.println(": H        Show this help");
+    Serial.println(": R        Reset Gigatron");
+    Serial.println(": L        Start Loader");
+    Serial.println(": M        Show key mapping or menu in Loader screen");
+    Serial.println(": P[<n>]   Transfer object file from PROGMEM slot <n>");
+    Serial.print  (": P");     Serial.print(arrayLen(gt1Files) - 1);
+    Serial.println(    "       Type saved EEPROM data back into Gigatron");
+    Serial.println(":          [Hint: Use '.SAVE' for saving, not 'T'-mode!]");
+    Serial.println(": U        Transfer object file from USB");
     Serial.println(": K<name>  Transfer from SD");
     Serial.println(": J        List SD");
-    Serial.println(": .<text>  Send Keys");
-    Serial.println(": C        Echo toggle");
-    Serial.println(": T        Terminal mode");
-    Serial.println(": W/A/S/D  Arrows");
-    Serial.println(": Z/X      A/B");
-    Serial.println(": Q/E      Select/Start");
+    Serial.println(": .<text>  Send text line as ASCII keystrokes");
+    Serial.println(": C        Toggle echo mode (default off)");
+    Serial.println(": T        Enter terminal mode");
+    Serial.println(": W/A/S/D  Up/left/down/right arrow");
+    Serial.println(": Z/X      A/B button");
+    Serial.println(": Q/E      Select/start button");
   #endif
 }
 
@@ -748,7 +751,7 @@ void doReset(int n)
 {
   // Soft reset: hold start for >128 frames (>2.1 seconds)
   #if hasSerial
-    Serial.println(":Resetting");
+    Serial.println(":Resetting Gigatron");
     Serial.flush();
   #endif
   sendController(~buttonStart, n ? n : 150);
@@ -761,7 +764,7 @@ void doLoader()
 {
   // Navigate menu. 'Loader' is at the bottom
   #if hasSerial
-    Serial.println(":Start Loader");
+    Serial.println(":Starting Loader from menu");
     Serial.flush();
   #endif
 
@@ -800,7 +803,7 @@ void doLine(char *line)
 void doTerminal()
 {
   #if hasSerial
-    Serial.println(":Terminal mode");
+    Serial.println(":Entering terminal mode");
     Serial.println(":Exit with Ctrl-D");
     char next = 0, last;
     byte out;
@@ -985,7 +988,7 @@ void doTransfer(int (*readNext)(), void (*ask)(int))
       Serial.print("!Failed");
       return;
     }
-    Serial.println(":From PROGMEM");
+    Serial.println(":Sending from PROGMEM");
   #endif
   
   if(ask)ask(3);
@@ -1012,7 +1015,7 @@ void doTransfer(int (*readNext)(), void (*ask)(int))
     // Check that segment doesn't cross the page boundary
     if ((address & 255) + len > 256) {
       #if hasSerial
-        Serial.println("!Page overflow");
+        Serial.println("!Data error (page overflow)");
       #endif
       return;
     }
@@ -1288,7 +1291,7 @@ void sendPulse(byte pin)
 void sendSavedFile()
 {
   #if hasSerial
-    Serial.println(":From EEPROM");
+    Serial.println(":Sending from EEPROM");
   #endif
   word i = fileStart, j = 0;            // i is the file index. j is the line index
   int lineDelay = 50;                   // Default extra delay time for "line feed"
