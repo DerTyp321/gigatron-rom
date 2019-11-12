@@ -670,7 +670,10 @@ void doVersion()
     #define Q(s) V(s)
     Serial.println(F(": Gigatron data=" Q(gigatronDataPin) " latch=" Q(gigatronLatchPin) " pulse=" Q(gigatronPulsePin)));
     Serial.println(F(": Keyboard clock=" Q(keyboardClockPin) " data=" Q(keyboardDataPin)));
-    Serial.println(F(": Controller data=" Q(gameControllerDataPin)));
+    #if gameControllerDataPin >= 0
+      Serial.println(F(": Controller data=" Q(gameControllerDataPin) " latch=" Q(gameControllerLatchPin) " pulse=" Q(gameControllerPulsePin)));
+    #endif
+    
     Serial.println(F(":EEPROM:"));
     Serial.print(F(": size="));
     Serial.print(EEPROM.length());
@@ -840,6 +843,9 @@ void doTerminal()
 
 void doProgmemFileTransfer(int arg)
 {
+  #if hasSerial
+    Serial.println(F(":Sending from PROGMEM"));
+  #endif
   if (0 <= arg && arg < arrayLen(gt1Files)) {
     gt1ProgmemLoc = gt1Files[arg].gt1; // Set Location of built-in GT1 file
     doTransfer(readNextProgmem, NULL); // Send GT1 file to Gigatron
@@ -848,6 +854,9 @@ void doProgmemFileTransfer(int arg)
 
 void doSDFileTransfer(char *filename)
 {
+  #if hasSerial
+    Serial.println(F(":Sending from SD card"));
+  #endif
   #if sdChipSelectPin >= 0
     File dataFile = SD.open(filename);
     if(!dataFile) {
@@ -865,7 +874,7 @@ void doSDFileTransfer(char *filename)
 void doPrintSDFiles()
 {
   #if hasSerial and sdChipSelectPin >= 0
-    Serial.println(F(": Files"));
+    Serial.println(F(":Files:"));
     File root = SD.open("/");
     File current;
     while(current = root.openNextFile()) {
@@ -990,7 +999,6 @@ void doTransfer(int (*readNext)(), void (*ask)(int))
       Serial.print(F("!Failed"));
       return;
     }
-    Serial.println(F(":Sending from PROGMEM"));
   #endif
   
   if(ask)ask(3);
